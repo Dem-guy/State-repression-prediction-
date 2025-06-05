@@ -86,7 +86,7 @@ install.packages(c(
 ))
 
 ```
-4. Render the R Markdown
+### 4. Render the R Markdown
 
 In R
 ```r
