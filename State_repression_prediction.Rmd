@@ -154,12 +154,9 @@ table(mm_binary$harsh)
 ## V-dem
 ```{r}
 
-install.packages("vdem")
 
 # Load Vdem Code
 vdem <- read_csv("Data/V-Dem-CY-Full+Others-v14.csv")
-
-vdem <- "vdem"
 
 # Pre-select relvant predicters 
 vdem_need <- vdem %>% 
@@ -207,13 +204,6 @@ table(df$harsh)
 ```{r}
 # Load tidymodels
 library(tidymodels)  
-
-library("vdemdata")
-install.packages()
-
-av <- available.packages(filters=list())
-av[av[, "vdemdata"] == pkg, ]
-
 
 # Calculate the 80th percentile of the 'year' column (this will be used as the cutoff date)
 cutoffDate <- df %>% 
