@@ -1,4 +1,4 @@
-# State-repression-prediction-
+# State repression prediction
 Poster Project for ETH course Methods IV. The goal of this project is to predict whether a state will respond to anti-government protests with repressive methods or not. using statistical learning techniques.
 
 
