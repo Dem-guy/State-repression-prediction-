@@ -70,9 +70,11 @@ git clone https://github.com/Dem-guy/State-repression-prediction.git
 cd State-repression-prediction
 ```
 
-### 2. Decompress V-dem Data (Data/V-Dem-CY-Full+Others-v14)
+### 2. Decompress V-dem Data (Data/V-Dem-CY-Full+Others-v14.csv.zip)
 
 ### 3. Install R Packages
+
+In R
 ```r
 install.packages(c(
   "tidyverse",
@@ -82,10 +84,15 @@ install.packages(c(
   "tidymodels",
   "gt"
 ))
+
 ```
+4. Render the R Markdown
 
-
-
+In R
+```r
+rmarkdown::render("analysis.Rmd")
+```
+Note: Running Random Forest Model will take some time, depending on operating system.
 
 ## License: All rights reserved
 
