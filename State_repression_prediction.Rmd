@@ -1,0 +1,708 @@
+---
+title: "State repression prediction"
+output: html_document
+date: "2025-01-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load packages
+library(readxl)
+library(tidyverse)
+library(car)
+library(broom)
+
+```
+
+```{r}
+# Define seed
+def_seed <- 42
+
+```
+
+
+## Mass Moblization Events
+```{r}
+# Read the Mass Mobilzation data into a dataframe
+mm <- read.csv("Data/mmALL_073120_csv.csv")
+
+# Data manipulation: Clean and filter the dataset
+mm <- mm %>%
+  # Remove any trailing "s+" characters from the "participants" column
+  mutate(
+    participants = str_replace(participants, "(?<=\\d)[s+]+$", "")
+  ) %>% 
+  filter(protest == 1) %>% # Keep only rows where protest == 1
+   # Select only necessary columns 
+  select(country, ccode, year, startday, startmonth, endday, endmonth, protesterviolence, participants, participants_category,
+         protesterdemand1,
+         protesterdemand2, protesterdemand3, protesterdemand4, stateresponse1, stateresponse2, stateresponse3,
+         stateresponse4, startyear, endyear)
+
+# Create a new column "harsh" that indicates if any state response was repressive (predicted variable)
+mm_vio <- mm %>%
+  mutate(
+    harsh = as.integer(
+      # Check if any of the multiple state responses (1 to 4) match specific repressive actions
+      if_any(
+        stateresponse1:stateresponse4, 
+        ~ .x %in% c("shootings", "killings", "beatings", "arrests", "crowd dispersal")
+      )
+    )
+  )
+
+# Create dummy variables for specific protest demands (labor wage dispute, land farm issue, etc.) (Forgot that tidymodels could handle this step)
+mm_vio <- mm_vio %>% 
+  mutate("labor wage dispute" = ifelse(protesterdemand1 == "labor wage dispute"| protesterdemand2 == "labor wage dispute"| protesterdemand3 == "labor wage dispute" | protesterdemand4 == "labor wage dispute", 1, 0),
+         "land farm issue" = ifelse(protesterdemand1 == "land farm issue"| protesterdemand2 == "land farm issue"| protesterdemand3 == "land farm issue" | protesterdemand4 == "land farm issue", 1, 0),
+         "police brutality" = ifelse(protesterdemand1 == "police brutality"| protesterdemand2 == "police brutality"| protesterdemand3 == "police brutality" | protesterdemand4 == "police brutality", 1, 0),
+                  "political behavior" = ifelse(protesterdemand1 == "political behavior"| protesterdemand2 == "political behavior"| protesterdemand3 == "political behavior" | protesterdemand4 == "political behavior", 1, 0),
+          "price increases, tax policy" = ifelse(protesterdemand1 == "price increases, tax policy"| protesterdemand2 == "price increases, tax policy"| protesterdemand3 == "price increases, tax policy" | protesterdemand4 == "price increases, tax policy", 1, 0),
+         "removal of politician" = ifelse(protesterdemand1 == "removal of politician"| protesterdemand2 == "removal of politician"| protesterdemand3 == "removal of politician" | protesterdemand4 == "removal of politician", 1, 0),
+                  "social restrictions" = ifelse(protesterdemand1 == "social restrictions"| protesterdemand2 == "social restrictions"| protesterdemand3 == "social restrictions" | protesterdemand4 == "social restrictions", 1, 0)
+         )
+         
+# Create a new column "multi_day" indicating if the protest lasted more than one day
+mm_vio$multi_day <- as.integer(
+  !(mm_vio$startyear == mm_vio$endyear &
+    mm_vio$startmonth == mm_vio$endmonth &
+    mm_vio$startday == mm_vio$endday)
+)
+
+# Create dummy variables for each month based on the "startmonth" column
+mm_num <- mm_vio %>% 
+  mutate("January" = ifelse(startmonth == "1", 1, 0),
+         "February" = ifelse(startmonth == "2", 1, 0),
+         "March" = ifelse(startmonth == "3", 1, 0),
+         "April" = ifelse(startmonth == "4", 1, 0),
+         "May" = ifelse(startmonth == "5", 1, 0),
+         "June" = ifelse(startmonth == "6", 1, 0),
+         "July" = ifelse(startmonth == "7", 1, 0),
+         "August" = ifelse(startmonth == "8", 1, 0),
+         "September" = ifelse(startmonth == "9", 1, 0),
+         "October" = ifelse(startmonth == "10", 1, 0),
+         "November" = ifelse(startmonth == "11", 1, 0),
+         "December" = ifelse(startmonth == "12", 1, 0)
+         )
+
+# Clean up the "participants" column again (remove any trailing "s+" characters)
+mm_com <- mm_num %>%
+  mutate(
+    participants = str_replace(participants, "(?<=\\d)[s+]+$", "")
+  )
+
+# Create a temporary "participants_temp" column based on the "participants_category" or "participants" column
+mm_com <- mm_com %>%
+  mutate(
+    participants_temp = if_else(
+      is.na(participants_category) | participants_category == "",
+      as.character(participants),
+      participants_category
+    )
+  )
+
+# Fix the "participants" column by averaging "123-456" formatted strings, and keep other formats as-is
+mm_fixed <- mm_com %>%
+  mutate(
+    value_fixed = case_when(
+      # only pure "123-456" strings get averaged:
+      str_detect(participants_temp, "^\\d+-\\d+$") ~
+        # grab the first number:    ^\d+
+        # grab the second number:   (?<=-)\d+$
+        as.character(
+          (
+            as.numeric(str_extract(participants_temp, "^[0-9]+")) +
+            as.numeric(str_extract(participants_temp, "(?<=-)[0-9]+$"))
+          ) / 2
+        ),
+      # everything else stays the same
+      TRUE ~ participants_temp
+    )
+  )
+
+# Filter out rows with invalid participant values that were too annyoing to fix (e.g., "100s-1000")
+mm_fixed2 <- mm_fixed %>% 
+  filter(!(participants_temp%in% c("100s-1000", "100s-10000")))
+
+
+# Final cleanup: remove non-numeric characters and convert to numeric values
+mm_final <- mm_fixed2 %>%
+  mutate(
+   # Remove everything except numbers from the "value_fixed" column
+    value_numbers_only = str_remove_all(value_fixed, "[^0-9]"),
+    # Convert to numeric values, treating empty strings as NA
+    value_num = as.numeric(value_numbers_only)
+  )
+# Create binary columns for different ranges of "value_num" (again, forgot about tidymodels)
+mm_binary <- mm_final %>%
+  mutate(
+    num_10000        = if_else(!is.na(value_num) & value_num > 10000, 1, 0),
+    num_5000_10000 = if_else(!is.na(value_num) & value_num >= 5000  & value_num <= 10000, 1, 0),
+    num_2000_4999  = if_else(!is.na(value_num) & value_num >= 2000  & value_num <= 4999, 1, 0),
+    num_1000_1999  = if_else(!is.na(value_num) & value_num >= 1000  & value_num <= 1999, 1, 0),
+    num_100_999    = if_else(!is.na(value_num) & value_num >= 100   & value_num <= 999, 1, 0),
+    num_50_99      = if_else(!is.na(value_num) & value_num >= 50    & value_num <= 99, 1, 0)
+  ) %>% 
+  rename("COWcode" = ccode)
+
+table(mm_binary$harsh)
+```
+
+## V-dem
+```{r}
+
+install.packages("vdem")
+
+# Load Vdem Code
+vdem <- read_csv("Data/V-Dem-CY-Full+Others-v14.csv")
+
+vdem <- "vdem"
+
+# Pre-select relvant predicters 
+vdem_need <- vdem %>% 
+  select(country_name, country_text_id, year, COWcode,
+         v2x_polyarchy, v2x_libdem, v2x_partipdem, v2x_delibdem, v2x_egaldem,
+         v2x_frassoc_thick, v2x_suffr, v2xcl_rol, v2x_jucon, v2xeg_eqprotec,v2jupoatck,
+         v2asuffrage, v2exrescon, v2exbribe, v2exembez, v2excrptps, v2xlg_legcon,
+         v2jucomp, v2cltort, v2clkill, v2cltrnslw, v2clrspct, v2clacjstm, v2clacjstw,
+         v2clacjust, v2cldiscm, v2cldiscw, v2clacfree, v2mecenefi, v2mecenefm, v2mecrit,
+         v2x_accountability, v2x_veracc, e_boix_regime, e_democracy_breakdowns,
+         v2meharjrn, v2cacamps, v2caviol, v2caassemb, e_pt_coup_attempts,
+         v2x_freexp_altinf, v2mecenefibin, v2psoppaut, v2clslavem, v2clslavef,
+         e_fh_status,
+         v2psbars, v2psparban,
+         e_gdp, e_gdppc, v2pepwrses, e_pop
+         ) %>% 
+  # Drop years before 2020
+  filter(year >= 1990,
+         year <= 2019) 
+
+```
+
+#Merging datsets
+```{r}
+# Merge the 'mm_binary' dataframe with the 'vdem_need' dataframe on 'year' and 'COWcode' columns
+df_merged_1 <- mm_binary %>%
+  left_join(vdem_need, by = c("year", "COWcode"))
+
+# Clean up the merged dataframe by:
+# 1. Removing unwanted columns (2, 4-7, 9-20, and specific columns like "participants_temp", "value_fixed", etc.)
+# 2. Converting 'year' to numeric type and 'harsh' to factor type
+# 3. Filtering out rows where 'year' is greater than 2019
+# 4. Removing rows with NA values
+df <- df_merged_1 %>% 
+  select(-c(2, 4:7, 9:20, "participants_temp", "value_fixed", "value_numbers_only", "value_num", "country_name", "country_text_id")) %>% 
+  mutate("year" = as.numeric(year),
+         "harsh" = as.factor(harsh)) %>% 
+  filter(year <= 2019) %>% 
+  na.omit()
+
+table(df$harsh)
+```
+
+# Resampeling setting
+```{r}
+# Load tidymodels
+library(tidymodels)  
+
+library("vdemdata")
+install.packages()
+
+av <- available.packages(filters=list())
+av[av[, "vdemdata"] == pkg, ]
+
+
+# Calculate the 80th percentile of the 'year' column (this will be used as the cutoff date)
+cutoffDate <- df %>% 
+  summarize(p80 = quantile(year, probs = 0.8)) %>%  # Calculate 80th percentile of 'year'
+  pull(p80)  # Extract the value of the 80th percentile
+
+# Check how many observations fall before and after the cutoff date (split into "train" and "test")
+df %>% 
+  count(split = if_else(year < cutoffDate, "train", "test"))  # Count rows before and after the cutoffDate
+
+# Split the data into training and testing sets based on the cutoff date
+train_full <- df %>% filter(year < cutoffDate)  # Filter rows where 'year' is less than the cutoffDate (training set)
+test_future <- df %>% filter(year >= cutoffDate)  # Filter rows where 'year' is greater than or equal to the cutoffDate (test set)
+
+# Arrange both datasets by 'year' (ensure chronological order)
+train_full <- train_full %>% arrange(year)  # Sort training set by 'year'
+test_future <- test_future %>% arrange(year)  # Sort test set by 'year'
+
+# Create rolling-origin resamples on the training set:
+# 'initial' = first 60% of data (training),
+# 'assess' = next 15% (testing),
+# 'skip' = 7.5% (between resamples)
+n <- nrow(train_full)  # Recalculate the number of rows for consistency
+
+resamples_time <- rolling_origin(
+  data = train_full,  # Apply rolling origin to the training data
+  initial = floor(0.6 * n),  # Initial training size (60% of the data)
+  assess = floor(0.15 * n),  # Assessment size (15% of the data)
+  cumulative = TRUE,  # Cumulative sampling (each training set includes previous data)
+  skip = floor(0.075 * n)  # Skip 7.5% of the data between resamples
+)
+
+
+```
+
+# Random Forest
+```{r}
+
+# 4. Specify a recipe for data preprocessing
+# removing variables with no variance, and other transformations.
+#   - All predictors are used, as tree models can handle many features.
+#   - Zero-variance predictors are removed and factors are dummy-encoded.
+rec <- recipe(harsh ~ ., data = train_full) %>%
+  update_role(year, new_role = "ID") %>%  # we won’t feed `date` directly
+  step_rm(year) %>% 
+  step_novel(all_nominal_predictors(), new_level = "__new__") %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_nzv(all_predictors()) 
+
+
+#Specify a random forest model (via ranger)
+rf_spec <- rand_forest(
+    mtry    = tune(),  # Tune the 'mtry' hyperparameter (number of predictors to try at each split)
+    trees   = tune(),  # Tune the 'trees' hyperparameter (number of trees in the forest)
+    min_n   = tune()   # Tune the 'min_n' hyperparameter (minimum number of observations in a node)
+  ) %>%
+  set_engine("ranger") %>%
+  set_mode("classification") # Set the mode to classification (not regression
+
+#Bundle the recipe and model into a workflow
+wf <- workflow() %>%
+  add_recipe(rec) %>%
+  add_model(rf_spec)
+
+# Create a tuning grids
+# First "probing" grid with a moderate range of values
+rf_grid <- grid_space_filling(
+  mtry(range = c(5, 30)),  # 'mtry' between 5 and 30
+  trees(range = c(500, 1500)),  # 'trees' between 500 and 1500
+  min_n(range = c(2, 10)),  # 'min_n' between 2 and 10
+  size = 20)  # Generate 20 hyperparameter combinations
+
+# Second grid with a wider search space and size of 50
+rf_grid_3 <- grid_space_filling(
+ mtry(range = c(10, 40)),
+  trees(range = c(800, 2000)),
+  min_n(range = c(1, 8)),
+ size = 50
+)
+
+
+
+# Tune the first grid with 20 combinations
+set.seed(42)  # Set random seed for reproducibility
+rf_tune <- tune_grid(
+  wf,  # Workflow containing the recipe and model
+  resamples = resamples_time,  # Rolling-origin resamples for time series cross-validation
+  grid = rf_grid,  # Grid of hyperparameters to tune
+  metrics = metric_set(roc_auc, accuracy)  # Metrics to evaluate the model (AUC and accuracy)
+)
+
+# Tune the second grid with 50 combinations
+set.seed(42)
+rf_tune3 <- tune_grid(
+  wf,
+  resamples = resamples_time,
+  grid      = rf_grid_2,
+  metrics   = metric_set(roc_auc, accuracy, precision, recall, f_meas)
+)
+
+# Display top 10 performing hyperparameter sets for AUC and precision
+rf_tune3 |> 
+  show_best(metric="roc_auc",n=10)
+rf_tune3 |> 
+  show_best(metric="precision",n=10)
+
+
+#Inspect the best hyperparameters based on AUC score
+# Select the best performing combination of hyperparameters based on AUC.
+best_params <- rf_tune3 %>%
+  select_best(metric="roc_auc")
+
+# Display best parameters
+best_params
+
+#Finalize the workflow and fit it on the full training set
+# Use the best hyperparameters to finalize the workflow and fit the model to the full training set.
+final_wf <- finalize_workflow(wf, best_params)
+
+final_fit <- final_wf %>%
+  fit(data = train_full)
+
+
+# Evaluate on your held-out future test set
+preds <- predict(final_fit, test_future, type = "prob") %>%
+  bind_cols(predict(final_fit, test_future)) %>%
+  bind_cols(test_future %>% select(harsh))
+
+preds2 <- predict(final_fit2, test_future, type = "prob") %>%
+  bind_cols(predict(final_fit2, test_future)) %>%
+  bind_cols(test_future %>% select(harsh))
+
+# Compute various evaluation metrics for the model
+roc_auc(preds, truth = harsh, .pred_1, event_level = "second")
+accuracy(preds, truth = harsh, .pred_class)
+precision(preds, truth = harsh, .pred_class, event_level = "second")
+recall(preds, truth = harsh, .pred_class, event_level = "second")
+f_meas(preds, truth = harsh, .pred_class, event_level = "second")
+
+
+# Compute confusion matrix for both model
+conf_mat_result_rf <- preds %>%
+  conf_mat(truth = harsh, estimate = .pred_class)
+
+conf_mat_result_rf  # Confusion matrix 
+
+
+
+# Collect and inspect the metrics for the tuning process
+metrics_tbl <- collect_metrics(rf_tune3)  # Collect metrics from tuning process
+
+
+```
+
+
+# Simple Linear Regression
+```{r}
+
+# Various attempted  predictor combinations for logistic regression
+
+#rec_simple <- recipe(harsh ~ year, country, protesterviolence, year, `labor wage dispute`, `land farm issue`,
+   #              `police brutality`, `labor wage dispute`, `land farm issue`, `removal of politician`, `social restrictions`, multi_day, num_10000, num_5000_10000, num_2000_4999, num_1000_1999, num_100_999, num_50_99, v2x_polyarchy, v2x_libdem, v2x_partipdem, v2x_delibdem, v2x_egaldem, v2x_frassoc_thick, v2x_suffr, v2x_jucon, v2cltort, v2mecenefm, data = train_full)
+
+
+#rec_simple <- recipe(harsh ~ year, country, protesterviolence, year, `labor wage dispute`, `land farm issue`,
+     #            `police brutality`, `labor wage dispute`, `land farm issue`, `removal of politician`, `social restrictions`, num_10000, num_5000_10000, num_2000_4999, num_1000_1999, num_100_999, num_50_99, v2x_polyarchy, v2x_libdem, v2x_partipdem, v2x_delibdem, v2x_egaldem, data = train_full)
+
+#rec_simple <- recipe(harsh ~ year, country, protesterviolence, year, `labor wage dispute`, `land farm issue`,
+  #               `police brutality`,`removal of politician`, `social restrictions`, num_10000, num_5000_10000, v2x_jucon, v2cltort, v2mecenefm, data = train_full)
+
+
+# Utilzued combination as mentioned in report 
+rec_simple <- recipe(harsh ~ year, country, protesterviolence, `labor wage dispute`, `land farm issue`,
+                 `police brutality`,`removal of politician`, `social restrictions`, num_10000, num_5000_10000, v2x_polyarchy, v2x_libdem, v2x_frassoc_thick, v2x_suffr, v2x_jucon, v2cltort, v2mecenefm, data = train_full)
+
+# Define a simple logistic regression model without any penalty (plain MLE logistic regression)
+log_simple_spec <- logistic_reg() %>%    # Logistic regression model
+  set_engine("glm") %>%   # Using the "glm" engine, which is standard for logistic regression
+  set_mode("classification")  # Set the mode to classification since we're predicting a binary outcome
+
+
+# Create a workflow that combines the recipe and the model
+wf_simple <- workflow() %>%  # Create a new workflow
+  add_recipe(rec_simple) %>%  # Add the preprocessing recipe to the workflow
+  add_model(log_simple_spec)  # Add the logistic regression model to the workflow
+
+
+# Fit & evaluate:
+fit_simple <- fit(wf_simple, data = train_full)
+
+# Generate predictions for the test set
+preds_simple <- predict(fit_simple, test_future, type = "prob") %>%
+  bind_cols(predict(fit_simple, test_future)) %>%
+  bind_cols(test_future %>% select(harsh))
+
+# Compute various performance metrics:
+roc_auc(preds_simple, truth = harsh, .pred_1, event_level = "second")
+accuracy(preds_simple, truth = harsh, .pred_class)
+precision(preds_simple, truth = harsh, .pred_class, event_level = "second")
+recall(preds_simple, truth = harsh, .pred_class, event_level = "second")
+f_meas(preds_simple, truth = harsh, .pred_class, event_level = "second")
+
+#Confusion matrix to assess the classifier's performance
+conf_mat_result_simple <- preds_simple %>%
+  conf_mat(truth = harsh, estimate = .pred_class)
+
+conf_mat_result_simple
+
+print(glance(fit_simple))
+
+
+```
+
+# Lasso
+```{r}
+# Define the preprocessing steps for the recipe:
+ec_all <- recipe(harsh ~ ., data = train_full) %>%
+  update_role(year, new_role = "ID") %>%  # Mark 'year' as an ID variable (does not participate in modeling)
+  step_rm(year) %>%  # Remove the 'year' variable from the dataset
+  step_novel(all_nominal_predictors(), new_level = "__new__") %>%  # Add a new level for unseen categories in nominal predictors
+  step_dummy(all_nominal_predictors()) %>%  # Create dummy variables for all nominal predictors
+  step_nzv(all_predictors()) %>%  # Remove predictors with near-zero variance
+  step_normalize(all_numeric_predictors())  # Normalize all numeric predictors (zero mean, unit variance)
+
+# Specify the LASSO model 
+lasso_spec <- 
+  logistic_reg(penalty = tune(), mixture = 1) %>%  # mixture=1 ⇒ LASSO
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+# Create the workflow object combining the recipe and model:
+wf_lasso <- 
+  workflow() %>%
+  add_recipe(rec_all) %>%
+  add_model(lasso_spec)
+
+# Tune the penalty parameter (lambda) using rolling-origin cross-validation
+lasso_grid <- grid_regular(penalty(), levels = 50)  # 50 candidate λ’s
+
+set.seed(42)
+lasso_tune <- tune_grid(
+  wf_lasso,
+  resamples = resamples_time,
+  grid      = lasso_grid,
+  metrics   = metric_set(roc_auc, accuracy, precision, recall, f_meas)
+)
+
+
+# Display and Pick best lambda based on ROC AUC
+lasso_tune |> 
+  show_best(metric="roc_auc",n=10)
+
+lasso_tune |> 
+  show_best(metric="recall",n=10)
+
+lasso_tune |> 
+  show_best(metric="precision",n=10)
+
+best_lasso <- select_best(lasso_tune, metric ="roc_auc")
+
+
+# Finalize the workflow by adding the best penalty
+final_lasso_wf <- finalize_workflow(wf_lasso, best_lasso)
+fit_lasso <- fit(final_lasso_wf, data = train_full)
+
+
+
+# Make predictions on the test set:
+preds_lasso <- predict(fit_lasso, test_future, type = "prob") %>%
+  bind_cols(predict(fit_lasso, test_future)) %>%
+  bind_cols(test_future %>% select(harsh))
+
+
+# Evaluate model performance using various metrics:
+roc_auc(preds_lasso, truth = harsh, .pred_1, event_level = "second")
+precision(preds_lasso, truth = harsh, .pred_class, event_level = "second")
+recall(preds_lasso, truth = harsh, .pred_class, event_level = "second")
+
+
+# Generate confusion matrix for performance evaluation:
+conf_mat_result_lasso <- preds_lasso %>%
+  conf_mat(truth = harsh, estimate = .pred_class)
+
+
+# Collect and process metrics from LASSO tuning:
+metrics_tbl_lasso <- collect_metrics(lasso_tune)
+
+
+ # Extract and inspect the non-zero coefficients:
+coefs <- fit_lasso %>%
+  pull_workflow_fit() %>%  # Extract the fitted workflow
+  tidy() %>%  # Convert to tidy format
+  filter(term != "(Intercept)", estimate != 0)  # Filter for non-zero coefficients, excluding intercept
+nrow(coefs)         # Count the number of non-zero coefficients
+head(arrange(coefs, desc(abs(estimate))), 5)  # Show top 5 non-zero coefficients by absolute value
+
+
+```
+
+
+
+
+# ROC Plot
+```{r}
+
+# 1. Generate ROC data for each model
+# For each model, calculate the ROC curv
+roc_simple <- roc_curve(
+  data = bind_cols(predict(fit_simple, test_future, type = "prob"), test_future),
+  truth = harsh, .pred_1,
+  event_level = "second",
+) %>% mutate(model = "Simple Logit")
+
+roc_lasso <- roc_curve(
+  data = bind_cols(predict(fit_lasso, test_future, type = "prob"), test_future),
+  truth = harsh, .pred_1,
+  event_level = "second"
+) %>% mutate(model = "LASSO")
+
+roc_rf <- roc_curve(
+  data = bind_cols(predict(final_fit, test_future, type = "prob"), test_future),
+  truth = harsh, .pred_1,
+  event_level = "second"
+) %>% mutate(model = "Random Forest")
+
+# 2. Bind and plot ROC curves for all models
+# Combine the ROC data for all models into a single dataframe for easy plotting
+roc_all <- bind_rows(roc_simple, roc_lasso, roc_rf)
+
+# Plot the ROC curves for all three models
+ggplot(roc_all, aes(x = 1 - specificity, y = sensitivity, color = model)) +  # Plot FPR (1 - specificity) vs. TPR (sensitivity) and color by model
+  geom_line(size = 1) +  # Draw lines for each model's ROC curve
+  geom_abline(lty = 2) +  # Add a diagonal line (random model reference)
+  labs(
+    x = "False Positive Rate",  # Label for the x-axis (1 - specificity)
+    y = "True Positive Rate",  # Label for the y-axis (sensitivity)
+    title = "ROC Curves: Simple vs. LASSO vs. Random Forest"  # Plot title
+  ) + 
+  labs(color = "Model") +  # Label for the color legend (indicating model type)
+  theme_minimal()  # Use a minimal theme for the plot
+
+```
+
+
+# Metric Table
+```{r}
+
+# 1. Compute each metric for each model and extract the .estimate
+# Simple logistic
+auc_simple  <- roc_auc(preds_simple, truth = harsh, .pred_1, event_level = "second") %>% pull(.estimate)
+acc_simple  <- accuracy(preds_simple, truth = harsh, .pred_class)            %>% pull(.estimate)
+prec_simple <- precision(preds_simple, truth = harsh, .pred_class, event_level = "second") %>% pull(.estimate)
+rec_simple  <- recall(preds_simple, truth = harsh, .pred_class, event_level = "second")    %>% pull(.estimate)
+f1_simple   <- f_meas(preds_simple, truth = harsh, .pred_class, event_level = "second")    %>% pull(.estimate)
+
+# LASSO logistic
+auc_lasso  <- roc_auc(preds_lasso, truth = harsh, .pred_1, event_level = "second") %>% pull(.estimate)
+acc_lasso  <- accuracy(preds_lasso, truth = harsh, .pred_class)                   %>% pull(.estimate)
+prec_lasso <- precision(preds_lasso, truth = harsh, .pred_class, event_level = "second") %>% pull(.estimate)
+rec_lasso  <- recall(preds_lasso, truth = harsh, .pred_class, event_level = "second")    %>% pull(.estimate)
+f1_lasso   <- f_meas(preds_lasso, truth = harsh, .pred_class, event_level = "second")    %>% pull(.estimate)
+
+# Random Forest
+auc_rf     <- roc_auc(preds, truth = harsh, .pred_1, event_level = "second") %>% pull(.estimate)
+acc_rf     <- accuracy(preds, truth = harsh, .pred_class)                   %>% pull(.estimate)
+prec_rf    <- precision(preds, truth = harsh, .pred_class, event_level = "second") %>% pull(.estimate)
+rec_rf     <- recall(preds, truth = harsh, .pred_class, event_level = "second")    %>% pull(.estimate)
+f1_rf      <- f_meas(preds, truth = harsh, .pred_class, event_level = "second")    %>% pull(.estimate)
+
+# 2. Assemble into a single tibble
+metrics_table <- tibble(
+  model     = c("Simple Logit", "LASSO", "Random Forest"),
+  roc_auc   = c(auc_simple,  auc_lasso,  auc_rf),
+  accuracy  = c(acc_simple,  acc_lasso,  acc_rf),
+  precision = c(prec_simple, prec_lasso, prec_rf),
+  recall    = c(rec_simple,  rec_lasso,  rec_rf),
+  f1_score  = c(f1_simple,   f1_lasso,   f1_rf)
+) %>%
+  #  round to three decimal places
+  mutate(across(roc_auc:f1_score, ~ round(.x, 3)))
+
+# 2.1. Assemble into a single tibble with less metrics
+metrics_table2 <- tibble(
+  model     = c("Simple Logit", "LASSO", "Random Forest"),
+  roc_auc   = c(auc_simple,  auc_lasso,  auc_rf),
+  precision = c(prec_simple, prec_lasso, prec_rf),
+  recall    = c(rec_simple,  rec_lasso,  rec_rf)
+) %>%
+  #  round to three decimal places
+  mutate(across(roc_auc:recall, ~ round(.x, 3)))
+
+# Load the gt package to create nice HTML tables for reports
+library(gt)
+
+# Create a gt table from the first metrics table
+my_gt_table <- metrics_table %>% 
+  gt()  # Convert the metrics_table to a gt table
+
+# Create a gt table from the second metrics table
+my_gt_table2 <- metrics_table2 %>% 
+  gt()  #
+
+# Install PhantomJS if not already installed (required for taking screenshots)
+webshot::install_phantomjs()  
+
+# Save the first gt table as a PNG image
+gtsave(my_gt_table, "my_table.png")  # Save the first table as a PNG file
+
+# Save the second gt table as a PNG image
+gtsave(my_gt_table2, "my_table2.png")  # Save the second table as a PNG file
+
+
+```
+
+
+# Lasso top 5
+```{r}
+
+# 1. Extract the tidy coefficients from  fitted glmnet model:
+
+ # Pull the workflow fit from the LASSO model, convert to tidy format, and filter the coefficients
+coefs2 <- fit_lasso %>% 
+  pull_workflow_fit() %>%  # Extract the fitted model from the workflow
+  tidy() %>%  # Convert the coefficients to tidy format (one row per coefficient)
+  filter(term != "(Intercept)", estimate != 0) %>%  # Remove intercept and zero coefficients
+  mutate(abs_est = abs(estimate)) %>%  # Create a new column with absolute values of coefficients
+  arrange(desc(abs_est)) %>%  # Sort the coefficients by their absolute values in descending order
+  dplyr::slice(1:5)  # Keep only the top 5 coefficients (highest absolute values)
+
+# Assign color based on the sign of the coefficient
+coefs2 <- coefs2 %>%
+  mutate(color = ifelse(estimate < 0, "lightgrey", "navy"))
+
+
+# Define custom labels for the terms to make them more readable
+customlab <- c(protesterviolence = "Protester Violence",
+    v2exbribe = "Executive Bribery",
+    v2exrescon = "Respecting the Constitution",
+    v2cacamps = "Political Polarization",
+    v2cldiscm = "Freedom of Discussion (Men)"
+)
+
+# 2. Plot a horizontal bar chart 
+ggplot(coefs2, aes(
+    x = fct_reorder(term, abs_est),  # reorder factor by abs_est
+    y = estimate,
+    fill = color
+  )) +
+  geom_col() +
+  scale_fill_identity() +
+  coord_flip() +
+  scale_x_discrete(labels=customlab )+
+  labs(
+    title = "Top-5 Predictors by LASSO: Inpact on Repressive Response",
+    x = NULL,
+    y = "Coefficient Size"
+  ) +
+  theme_minimal()
+
+
+
+```
+
+
+# Confusion Matrices
+```{r}
+# Custom color scales for the confusion matrix
+color_manual_l <- c("1436" = "navy", "434" = "grey84", "194" = "grey84", "614" = "navy")
+color_manual_r <- c("1407" = "navy", "400" = "grey84", "223" = "grey84", "648" = "navy")
+
+# Convert confusion matrix results for LASSO and Random Forest to data frames
+conf_matrix_l <- as.data.frame(conf_mat_result_lasso$table)
+conf_matrix_r <- as.data.frame(conf_mat_result_rf$table)
+
+# Create  LASSO confusion matrix
+ggplot(data = conf_matrix_l, aes(x = Prediction, y = Truth, fill = as.factor(Freq))) +
+  geom_tile() + # Use geom_tile to create a heatmap-like plot
+  geom_text(aes(label = Freq), color = "white", size = 5) +
+  scale_fill_manual(values = color_manual_l) +  # Set custom color scale here
+  labs(title = "Confusion Matrix Lasso", x = "Predicted", y = "Actual") +
+  theme_minimal() 
+
+# Create Random Forest confusion matrix
+ggplot(data = conf_matrix_r, aes(x = Prediction, y = Truth, fill = as.factor(Freq))) +
+  geom_tile() +
+  geom_text(aes(label = Freq), color = "white", size = 5) +
+  scale_fill_manual(values = color_manual_r) +  # Set custom color scale here
+  labs(title = "Confusion Matrix Random Forest", x = "Predicted", y = "Actual") +
+  theme_minimal() 
+
+```
+
