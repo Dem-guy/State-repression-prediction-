@@ -155,7 +155,8 @@ install.packages(c(
   "readxl",
   "broom",       
   "tidymodels",
-  "gt"
+  "gt",
+  "install_phantomjs"
 ))
 
 ```
