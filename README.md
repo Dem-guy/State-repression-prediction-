@@ -70,7 +70,9 @@ git clone https://github.com/Dem-guy/State-repression-prediction.git
 cd State-repression-prediction
 ```
 
-### 2. Install R Packages
+### 2. Decompress V-dem Data (Data/V-Dem-CY-Full+Others-v14)
+
+### 3. Install R Packages
 ```r
 install.packages(c(
   "tidyverse",
@@ -81,6 +83,9 @@ install.packages(c(
   "gt"
 ))
 ```
+
+
+
 
 ## License: All rights reserved
 
