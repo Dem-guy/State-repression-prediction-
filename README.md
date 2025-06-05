@@ -71,16 +71,16 @@ cd State-repression-prediction
 ```
 
 ### 2. Install R Packages
-In R or RStudio:
-
+```r
 install.packages(c(
   "tidyverse",
   "car",
   "readxl",
-  "broom",        # or whichever modeling packages you used
+  "broom",       
   "tidymodels",
   "gt"
 ))
+```
 
 ## License: All rights reserved
 
