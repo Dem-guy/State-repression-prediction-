@@ -90,7 +90,7 @@ install.packages(c(
 
 In R
 ```r
-rmarkdown::render("analysis.Rmd")
+rmarkdown::render("State_repression_prediction.Rmd")
 ```
 Note: Running Random Forest Model will take some time, depending on operating system.
 
