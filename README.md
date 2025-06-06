@@ -42,7 +42,7 @@ Multiple state responses can be recorded per event.
 
 ### Varieties of Democracy
 **Source**
-Coppedge, M., Gerring, J., Knutsen, C. H., Lindberg, S. I., Teorell, J., Altman, D., ... & Ziblatt, D. (2024b). V-Dem [Country-Year/Country-Date] Dataset v14. Varieties of Democracy (V-Dem) Project. https://doi.org/10.23696/mcwt-fr58
+Coppedge, M., Gerring, J., Knutsen, C. H., Lindberg, S. I., Teorell, J., Altman, D., ... & Ziblatt, D. (2024). V-Dem [Country-Year/Country-Date] Dataset v14. Varieties of Democracy (V-Dem) Project. https://doi.org/10.23696/mcwt-fr58
 
 **Description**
 Country‐level data from 1789 to present. Contains hundreds of indicators on governance, democracy, civil liberties, media freedom, corruption, and more.
