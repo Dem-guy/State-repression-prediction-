@@ -3,7 +3,6 @@ A poster project for the ETH Methods IV course. This analysis uses statistical�
 
 
 ## Motivation
-
 From a policy standpoint, a predictor of state repression can help international organizations and human‐rights activists spot early warning signs of punitive countermeasures. That, in turn, would allow them to deploy proactive measures—diplomatic pressure, media campaigns, or humanitarian support—before violence escalates.
 
 From a research standpoint, existing studies on government protest responses are usually case‐by‐case. Previous work often overlooks cross‐country variation or “softer” repressive tactics (e.g., orchestrated arrests, crowd dispersal without fatalities). A predictive model could (a) test competing theoretical explanations, and (b) produce quantitative forecasts that direct scholars toward especially high‐risk scenarios.
@@ -11,7 +10,6 @@ From a research standpoint, existing studies on government protest responses are
 
 
 ## Data
-
 ### Mass mobilization protest data
 **Source**
 Clark, D., & Regan, P. (2016). Mass mobilization protest data (V5). Harvard Dataverse. https://doi.org/10.7910/DVN/HTTWYL
@@ -43,7 +41,6 @@ Multiple state responses can be recorded per event.
 
 
 ### Varieties of Democracy
-
 **Source**
 Coppedge, M., Gerring, J., Knutsen, C. H., Lindberg, S. I., Teorell, J., Altman, D., ... & Ziblatt, D. (2024b). V-Dem [Country-Year/Country-Date] Dataset v14. Varieties of Democracy (V-Dem) Project. https://doi.org/10.23696/mcwt-fr58
 
@@ -132,7 +129,6 @@ Data limited to 56 variables which I deemed theoretically relevant, including de
 
 
 ## Usage
-
 ### 1. Clone the Repository
 
 ```bash
